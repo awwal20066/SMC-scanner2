@@ -1,4 +1,4 @@
-import os
+        import os
 import threading
 import time
 import requests
@@ -12,7 +12,7 @@ TELEGRAM_CHAT_ID = "5284203725"
 
 @app.route("/")
 def home():
-  return "SMC Scanner is live and running!"
+  return "SMC Scanner is live and scanning ALL Bybit USDT pairs!"
 
 
 def send_smc_alert(symbol, setup_type, entry_zone, fib_level, fvg_price):
@@ -35,7 +35,7 @@ def send_smc_alert(symbol, setup_type, entry_zone, fib_level, fvg_price):
         },
     )
   except Exception as e:
-    print(f"Telegram error: {e}")
+    print(f"Telegram error: {e}", flush=True)
 
 
 def get_1h_klines(symbol):
@@ -60,6 +60,7 @@ def analyze_smc_setup(symbol):
   lows = [float(k[3]) for k in klines]
   closes = [float(k[4]) for k in klines]
 
+  # Check Bullish Setup (1H)
   c1_high, c2_high, c3_high = highs[-3], highs[-2], highs[-1]
   c1_low, c2_low, c3_low = lows[-3], lows[-2], lows[-1]
 
@@ -83,6 +84,7 @@ def analyze_smc_setup(symbol):
           )
           return
 
+  # Check Bearish Setup (1H)
   is_bearish_fvg = c3_high < c1_low
   if is_bearish_fvg:
     recent_high = max(highs[-10:])
@@ -103,26 +105,48 @@ def analyze_smc_setup(symbol):
 
 
 def run_scanner():
-  send_smc_alert("1H_SMC_SCANNER", "Scanner Live", 0.0, 0.0, 0.0)
+  print("🚀 1H SMC Scanner initialized...", flush=True)
+  send_smc_alert("1H_SMC_SCANNER", "Full Market Scanner Live", 0.0, 0.0, 0.0)
+
   while True:
     try:
       url = "https://api.bybit.com/v5/market/tickers?category=linear"
       res = requests.get(url).json()
+
       if "result" in res and "list" in res["result"]:
         tickers = res["result"]["list"]
         usdt_pairs = [
             t["symbol"] for t in tickers if t["symbol"].endswith("USDT")
         ]
 
-        for symbol in usdt_pairs[:80]:
+        print(
+            f"🔍 Starting scan loop for ALL {len(usdt_pairs)} USDT pairs...",
+            flush=True,
+        )
+
+        for i, symbol in enumerate(usdt_pairs):
           analyze_smc_setup(symbol)
-          time.sleep(0.1)
+          time.sleep(0.05)  # Fast rate limit to scan hundreds of coins quickly
+
+          # Print progress every 50 pairs to Render logs
+          if (i + 1) % 50 == 0 or (i + 1) == len(usdt_pairs):
+            print(
+                f"Progress: Scanned {i + 1}/{len(usdt_pairs)} pairs...",
+                flush=True,
+            )
+
+        print(
+            "✅ Cycle complete. Waiting 5 minutes before next full scan...",
+            flush=True,
+        )
+
     except Exception as e:
-      print(f"Error during scan: {e}")
+      print(f"Error during scan: {e}", flush=True)
+
     time.sleep(300)
 
 
-# Start background thread for scanner loop
+# Start continuous background scanner thread
 scanner_thread = threading.Thread(target=run_scanner, daemon=True)
 scanner_thread.start()
 
