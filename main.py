@@ -1,4 +1,4 @@
-        import os
+import os
 import threading
 import time
 import requests
@@ -12,7 +12,7 @@ TELEGRAM_CHAT_ID = "5284203725"
 
 @app.route("/")
 def home():
-  return "SMC Scanner is live and scanning ALL Bybit USDT pairs!"
+  return "SMC Scanner is active and scanning ALL Bybit USDT pairs!"
 
 
 def send_smc_alert(symbol, setup_type, entry_zone, fib_level, fvg_price):
@@ -33,6 +33,7 @@ def send_smc_alert(symbol, setup_type, entry_zone, fib_level, fvg_price):
             "text": message,
             "parse_mode": "Markdown",
         },
+        timeout=10,
     )
   except Exception as e:
     print(f"Telegram error: {e}", flush=True)
@@ -60,59 +61,51 @@ def analyze_smc_setup(symbol):
   lows = [float(k[3]) for k in klines]
   closes = [float(k[4]) for k in klines]
 
-  # Check Bullish Setup (1H)
   c1_high, c2_high, c3_high = highs[-3], highs[-2], highs[-1]
   c1_low, c2_low, c3_low = lows[-3], lows[-2], lows[-1]
 
-  is_bullish_fvg = c3_low > c1_high
-
-  if is_bullish_fvg:
+  # Bullish FVG + BOS
+  if c3_low > c1_high:
     recent_low = min(lows[-10:])
     recent_high = max(highs[-5:])
     range_span = recent_high - recent_low
-
     if range_span > 0:
       break_level = (closes[-1] - recent_low) / range_span
-      if break_level <= 0.70:
-        if c2_low >= recent_low:
-          send_smc_alert(
-              symbol,
-              "Bullish BOS + FVG",
-              c1_high,
-              break_level,
-              (c3_low + c1_high) / 2,
-          )
-          return
+      if break_level <= 0.70 and c2_low >= recent_low:
+        send_smc_alert(
+            symbol,
+            "Bullish BOS + FVG",
+            c1_high,
+            break_level,
+            (c3_low + c1_high) / 2,
+        )
+        return
 
-  # Check Bearish Setup (1H)
-  is_bearish_fvg = c3_high < c1_low
-  if is_bearish_fvg:
+  # Bearish FVG + BOS
+  if c3_high < c1_low:
     recent_high = max(highs[-10:])
     recent_low = min(lows[-5:])
     range_span = recent_high - recent_low
-
     if range_span > 0:
       break_level = (recent_high - closes[-1]) / range_span
-      if break_level <= 0.70:
-        if c2_high <= recent_high:
-          send_smc_alert(
-              symbol,
-              "Bearish BOS + FVG",
-              c1_low,
-              break_level,
-              (c3_high + c1_low) / 2,
-          )
+      if break_level <= 0.70 and c2_high <= recent_high:
+        send_smc_alert(
+            symbol,
+            "Bearish BOS + FVG",
+            c1_low,
+            break_level,
+            (c3_high + c1_low) / 2,
+        )
 
 
 def run_scanner():
-  print("🚀 1H SMC Scanner initialized...", flush=True)
-  send_smc_alert("1H_SMC_SCANNER", "Full Market Scanner Live", 0.0, 0.0, 0.0)
+  print("🚀 1H SMC Strategy Scanner initialized...", flush=True)
+  send_smc_alert("1H_SMC_SCANNER", "Full Market Scan Started", 0.0, 0.0, 0.0)
 
   while True:
     try:
       url = "https://api.bybit.com/v5/market/tickers?category=linear"
-      res = requests.get(url).json()
-
+      res = requests.get(url, timeout=10).json()
       if "result" in res and "list" in res["result"]:
         tickers = res["result"]["list"]
         usdt_pairs = [
@@ -120,37 +113,25 @@ def run_scanner():
         ]
 
         print(
-            f"🔍 Starting scan loop for ALL {len(usdt_pairs)} USDT pairs...",
+            f"🔍 Scanning ALL {len(usdt_pairs)} USDT pairs...",
             flush=True,
         )
 
         for i, symbol in enumerate(usdt_pairs):
           analyze_smc_setup(symbol)
-          time.sleep(0.05)  # Fast rate limit to scan hundreds of coins quickly
+          time.sleep(0.05)
 
-          # Print progress every 50 pairs to Render logs
-          if (i + 1) % 50 == 0 or (i + 1) == len(usdt_pairs):
-            print(
-                f"Progress: Scanned {i + 1}/{len(usdt_pairs)} pairs...",
-                flush=True,
-            )
-
-        print(
-            "✅ Cycle complete. Waiting 5 minutes before next full scan...",
-            flush=True,
-        )
-
+        print("✅ Scan complete. Resting 5 minutes...", flush=True)
     except Exception as e:
-      print(f"Error during scan: {e}", flush=True)
+      print(f"Scanner error: {e}", flush=True)
 
     time.sleep(300)
 
 
-# Start continuous background scanner thread
 scanner_thread = threading.Thread(target=run_scanner, daemon=True)
 scanner_thread.start()
 
 if __name__ == "__main__":
   port = int(os.environ.get("PORT", 5000))
   app.run(host="0.0.0.0", port=port)
-  
+            
