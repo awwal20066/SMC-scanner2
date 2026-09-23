@@ -12,17 +12,17 @@ TELEGRAM_CHAT_ID = "5284203725"
 
 @app.route("/")
 def home():
-  return "SMC Scanner is active and scanning ALL Bybit USDT pairs!"
+  return "SMC Multi-Timeframe (1H & 15M) Scanner is Live!"
 
 
-def send_smc_alert(symbol, setup_type, entry_zone, fib_level, fvg_price):
+def send_smc_alert(symbol, tf_label, setup_type, fvg_top, fvg_bottom):
   message = (
-      f"🚨 *1H SMC SETUP DETECTED: {symbol}*\n\n"
+      f"🚨 *SMC ENTRY SETUP DETECTED*\n\n"
+      f"• *Pair:* `{symbol}`\n"
+      f"• *Timeframe:* `{tf_label}`\n"
       f"• *Type:* `{setup_type}`\n"
-      f"• *1H FVG Price:* `{fvg_price:.6f}`\n"
-      f"• *Fib Retracement:* `{fib_level:.2f}` (Valid <= 0.70)\n"
-      f"• *Clean Level:* No liquidity sweep detected\n\n"
-      f"Open TradingView 1H chart, confirm FVG box & BOS, and calculate risk!"
+      f"• *FVG Zone:* `{fvg_bottom:.5f}` - `{fvg_top:.5f}`\n\n"
+      f"Check TradingView to place your limit entry in the FVG zone!"
   )
   url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
   try:
@@ -39,8 +39,8 @@ def send_smc_alert(symbol, setup_type, entry_zone, fib_level, fvg_price):
     print(f"Telegram error: {e}", flush=True)
 
 
-def get_1h_klines(symbol):
-  url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval=60&limit=50"
+def get_klines(symbol, interval, limit=30):
+  url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval={interval}&limit={limit}"
   try:
     res = requests.get(url, timeout=5).json()
     if res.get("retCode") == 0 and "list" in res.get("result", {}):
@@ -52,8 +52,8 @@ def get_1h_klines(symbol):
   return None
 
 
-def analyze_smc_setup(symbol):
-  klines = get_1h_klines(symbol)
+def analyze_tf(symbol, interval, tf_label, lookback_range):
+  klines = get_klines(symbol, interval)
   if not klines or len(klines) < 10:
     return
 
@@ -61,46 +61,54 @@ def analyze_smc_setup(symbol):
   lows = [float(k[3]) for k in klines]
   closes = [float(k[4]) for k in klines]
 
+  # Dynamic structure lookback based on timeframe
+  recent_low = min(lows[lookback_range[0] : lookback_range[1]])
+  recent_high = max(highs[lookback_range[0] : lookback_range[1]])
+
   c1_high, c2_high, c3_high = highs[-3], highs[-2], highs[-1]
   c1_low, c2_low, c3_low = lows[-3], lows[-2], lows[-1]
 
-  # Bullish FVG + BOS
-  if c3_low > c1_high:
-    recent_low = min(lows[-10:])
-    recent_high = max(highs[-5:])
-    range_span = recent_high - recent_low
-    if range_span > 0:
-      break_level = (closes[-1] - recent_low) / range_span
-      if break_level <= 0.70 and c2_low >= recent_low:
-        send_smc_alert(
-            symbol,
-            "Bullish BOS + FVG",
-            c1_high,
-            break_level,
-            (c3_low + c1_high) / 2,
-        )
-        return
+  # 1. Bullish Setup: BOS + FVG
+  is_bullish_fvg = c3_low > c1_high
+  has_bullish_bos = closes[-1] > recent_high
 
-  # Bearish FVG + BOS
-  if c3_high < c1_low:
-    recent_high = max(highs[-10:])
-    recent_low = min(lows[-5:])
-    range_span = recent_high - recent_low
-    if range_span > 0:
-      break_level = (recent_high - closes[-1]) / range_span
-      if break_level <= 0.70 and c2_high <= recent_high:
-        send_smc_alert(
-            symbol,
-            "Bearish BOS + FVG",
-            c1_low,
-            break_level,
-            (c3_high + c1_low) / 2,
-        )
+  if is_bullish_fvg and has_bullish_bos:
+    send_smc_alert(
+        symbol,
+        tf_label,
+        "Bullish BOS + FVG",
+        fvg_top=c3_low,
+        fvg_bottom=c1_high,
+    )
+    return
+
+  # 2. Bearish Setup: BOS + FVG
+  is_bearish_fvg = c3_high < c1_low
+  has_bearish_bos = closes[-1] < recent_low
+
+  if is_bearish_fvg and has_bearish_bos:
+    send_smc_alert(
+        symbol,
+        tf_label,
+        "Bearish BOS + FVG",
+        fvg_top=c1_low,
+        fvg_bottom=c3_high,
+    )
+
+
+def analyze_smc_setup(symbol):
+  # Scan 1-Hour Timeframe (60 mins)
+  analyze_tf(symbol, interval=60, tf_label="1H", lookback_range=(-10, -3))
+
+  # Scan 15-Minute Timeframe (15 mins)
+  analyze_tf(symbol, interval=15, tf_label="15M", lookback_range=(-8, -3))
 
 
 def run_scanner():
-  print("🚀 1H SMC Strategy Scanner initialized...", flush=True)
-  send_smc_alert("1H_SMC_SCANNER", "Full Market Scan Started", 0.0, 0.0, 0.0)
+  print(
+      "🚀 SMC Multi-Timeframe Scanner (1H & 15M BOS + FVG) Started...",
+      flush=True,
+  )
 
   while True:
     try:
@@ -113,19 +121,19 @@ def run_scanner():
         ]
 
         print(
-            f"🔍 Scanning ALL {len(usdt_pairs)} USDT pairs...",
+            f"🔍 Scanning ALL {len(usdt_pairs)} USDT pairs on 1H & 15M...",
             flush=True,
         )
 
-        for i, symbol in enumerate(usdt_pairs):
+        for symbol in usdt_pairs:
           analyze_smc_setup(symbol)
-          time.sleep(0.05)
+          time.sleep(0.04)
 
-        print("✅ Scan complete. Resting 5 minutes...", flush=True)
+        print("✅ Scan complete. Resting 3 minutes...", flush=True)
     except Exception as e:
       print(f"Scanner error: {e}", flush=True)
 
-    time.sleep(300)
+    time.sleep(180)
 
 
 scanner_thread = threading.Thread(target=run_scanner, daemon=True)
@@ -134,4 +142,4 @@ scanner_thread.start()
 if __name__ == "__main__":
   port = int(os.environ.get("PORT", 5000))
   app.run(host="0.0.0.0", port=port)
-            
+  
